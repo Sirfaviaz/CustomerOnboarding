@@ -11,6 +11,8 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 from pathlib import Path
+import environ
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -127,9 +129,23 @@ STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-import os
-os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'C:/Users/favaz/Downloads/fresh-booster-423418-u2-0e87fdb972a9.json'
+
+
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Adjust this to match your frontend's domain
 ]
+
+
+
+
+
+env = environ.Env()
+
+
+environ.Env.read_env()
+
+
+AWS_ACCESS_KEY_ID = env('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = env('AWS_SECRET_ACCESS_KEY')
+AWS_DEFAULT_REGION = env('AWS_DEFAULT_REGION')

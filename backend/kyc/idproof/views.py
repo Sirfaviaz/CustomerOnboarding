@@ -20,6 +20,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.core.files.uploadedfile import UploadedFile
 import logging
+from django.conf import settings
 
 
 @api_view(['POST'])
@@ -48,7 +49,7 @@ def generate_session_token(user):
 
 @csrf_exempt
 def extract_details_from_id(request):
-    print('itshere')
+    
     
     # Configure AWS credentials and region
     aws_access_key_id = os.environ.get('AWS_ACCESS_KEY_ID')
@@ -62,7 +63,7 @@ def extract_details_from_id(request):
     if 'file' not in request.FILES:
         return JsonResponse({'error': 'No file uploaded.'}, status=400)
     
-    files = request.FILES.getlist('file')  # Get list of uploaded files
+    files = request.FILES.getlist('file')  # Get 'list' of uploaded files
 
     session_token = request.POST.get('session_token')
     user_id = request.POST.get('user_id')
@@ -71,12 +72,12 @@ def extract_details_from_id(request):
     
     try:
         boto3.setup_default_session(
-            aws_access_key_id=aws_access_key_id, 
-            aws_secret_access_key=aws_secret_access_key, 
-            region_name=aws_default_region
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        region_name=settings.AWS_DEFAULT_REGION
         )
 
-        s3_client = boto3.client('s3', region_name=aws_default_region)
+        s3_client = boto3.client('s3', region_name=settings.AWS_DEFAULT_REGION)
         textract_client = boto3.client('textract')
 
         bucket_name = 'idprooftest'
@@ -89,30 +90,28 @@ def extract_details_from_id(request):
             # Upload file to S3 bucket
             s3_client.upload_fileobj(file_obj, bucket_name, object_key)
             
-            # Log the object details for debugging
-            logger.info(f"Uploaded file to S3: Bucket={bucket_name}, Key={object_key}")
-            print(f"Uploaded file to S3: Bucket={bucket_name}, Key={object_key}")
+           
             
-            # Prepare arguments for analyze_id API call with S3 object reference
+            
             document = {'S3Object': {'Bucket': bucket_name, 'Name': object_key}}
             s3_object = {
                 'Bucket': bucket_name,
                 'Name': object_key
             }
            
-            # Call Textract's analyze_id method
+            
             response = textract_client.analyze_id(DocumentPages=[{'S3Object': s3_object}])
           
-            # Process extracted data
+           
             for field in response['IdentityDocuments'][0]['IdentityDocumentFields']:
                 field_type = field['Type']['Text']
                 field_value = field['ValueDetection']['Text']
                 if field_type not in extracted_data_dict or extracted_data_dict[field_type] is None:
                     extracted_data_dict[field_type] = field_value
                 else:
-                    # Update the value if it is null
+                 
                     extracted_data_dict[field_type] = field_value
-            # save_customer_document(session_token, file_obj, extracted_data_dict)
+            
 
         return JsonResponse({'extracted_data': extracted_data_dict})
 
@@ -136,25 +135,43 @@ def extract_details_from_id(request):
 def save_details(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Only POST requests allowed.'}, status=405)
-    
-    data = json.loads(request.body)
-    session_token = data.get('session_token')
-  
-    user = User.objects.get(id = session_token)
-    country = user.countries.first()
-    print(user)
+
     try:
+        data = request.POST
+        files = request.FILES.getlist('file')
+        session_token = data.get('session_token')
+        
+       
+        
+        # Fetch user and country
+        user = User.objects.get(id=session_token)
+        country = user.countries.first()  
+
+        if not country:
+            return JsonResponse({'error': 'Country not associated with user.'}, status=400)
+        
+        # Create customer instance
         customer = CustomerModel(
             surname=data.get('LAST_NAME'),
             first_name=data.get('FIRST_NAME'),
-            nationality_id=country.id, 
-            gender=data.get('GENDER','O'),
-            created_by=user  
+            nationality_id=country.id,
+            gender=data.get('GENDER', 'O'),
+            created_by=user
         )
         customer.save()
+
+       
+        save_customer_document(customer, files, data)
+        save_set(country.id,files,data)
+        
         return JsonResponse({'success': 'Details saved successfully!'})
+    
+    except User.DoesNotExist:
+        return JsonResponse({'error': 'Invalid session token. User does not exist.'}, status=404)
+    except CountryModel.DoesNotExist:
+        return JsonResponse({'error': 'Associated country does not exist.'}, status=404)
     except Exception as e:
-        print(str(e))
+      
         return JsonResponse({'error': str(e)}, status=500)    
 
 @csrf_exempt
@@ -207,14 +224,27 @@ def get_country(request):
         return JsonResponse({'error': 'Only GET requests allowed.'}, status=405)
 
 
-# def save_customer_document(customer, image_file, details):
-#     user = User.objects.get(id=customer)
-#     customer_document = CustomerDocumentModel(
-#         customer=user,
-#         document=image_file,
-#         details=json.dumps(details)
-#     )
-#     customer_document.save()
+
+def save_customer_document(customer, image_files, details):
+ 
+    for file_obj in image_files:
+        customer_document = CustomerDocumentModel(
+            customer=customer,
+            attached_file=file_obj,
+            extracted_json=json.dumps(details)
+        )
+        customer_document.save()
+
+def save_set(country,image_files,data):
+    a=len(image_files) > 1
+    name = 'id_proof'
+    document_set = DocumentSetModel(
+    name_of_document = name,
+    has_backside = a,
+    ocr_labels = json.dumps(data)
+    )
+    document_set.save()
+    document_set.countries.set([country])
 
 
 
